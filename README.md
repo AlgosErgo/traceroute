@@ -1,12 +1,12 @@
 # traceroute
 
-使用例
+## 使用例
 ```
 powershell -ExecutionPolicy Bypass -File .\TraceFromCsv.ps1 -CsvPath .\targets.csv -OkAfterTimeoutIp 203.0.113.45 -ConsecTimeoutsForOk 3 -NoDns
 ```
 
 
-ターミナル出力例
+## ターミナル出力例
 ```
 PS C:\Users\sr-server001\Desktop\test> powershell -ExecutionPolicy Bypass -File .\TraceFromCsv.ps1 -CsvPath .\targets.csv -OkAfterTimeoutIp 1.1.1.1 -ConsecTimeoutsForOk 3 -NoDns
 ログ出力先: tracert_20251002_000449.log （Append=False / OkAfterTimeoutIp=1.1.1.1 / N=3）
@@ -33,8 +33,8 @@ PS C:\Users\sr-server001\Desktop\test> powershell -ExecutionPolicy Bypass -File 
 PS C:\Users\sr-server001\Desktop\test>
 ```
 
-ログファイルの中身イメージ
-（冒頭サマリ → 詳細ログの順）
+## ログファイルの中身イメージ
+###（冒頭サマリ → 詳細ログの順）
 ```
 === 結果一覧 ===
 1 8.8.8.8［OK］
