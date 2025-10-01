@@ -80,11 +80,10 @@ Result : OK (指定IP 1.1.1.1 到達後にタイムアウト×3 連続)
 
 
   ## 判定ルール:
-    1. 1ホップ目でタイムアウト → NG
-    2. "Trace complete"（日英） → OK
-    3. 指定IP(-OkAfterTimeoutIp) へ到達後に「タイムアウト」が N 回連続（N=-ConsecTimeoutsForOk）→ OK
-        ※ -OkAfterTimeoutIp 未指定時は「ターゲットIPへ到達後」に同条件でOK
-    4. ホップ行が1つも無い場合 → NG
+1. 1ホップ目でタイムアウト → NG
+2. "Trace complete"（日英） → OK
+3. 指定IP(-OkAfterTimeoutIp) へ到達後に「タイムアウト」が N 回連続（N=-ConsecTimeoutsForOk）→ OK
+4. ホップ行が1つも無い場合 → NG
 
   ## ログ運用:
     - 既定は毎回新規ファイル（tracert_yyyymmdd_hhmmss.log）
