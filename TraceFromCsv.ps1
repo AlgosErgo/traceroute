@@ -1,82 +1,84 @@
-<#
+﻿<#
 .SYNOPSIS
-  CSVのIP（またはホスト名）を上から順に tracert し、詳細ログ＋サマリを出力する。
+  CSVのIP（またはホスト名）を上から順に tracert し、詳細ログ＋サマリを出力。
 
 .DESCRIPTION
-  - 1ホップ目でタイムアウト → NG
-  - "Trace complete"（日英対応） → OK
-  - 【可変ルール】指定IP( -OkAfterTimeoutIp ) へ到達後に "タイムアウト" が N 回連続（N = -ConsecTimeoutsForOk） → OK
-    ※ -OkAfterTimeoutIp 未指定なら「ターゲット到達後にタイムアウト×N連続」を適用
+  判定ルール:
+    - (1) 1ホップ目でタイムアウト → NG
+    - (2) "Trace complete"（日英） → OK
+    - (3) 指定IP(-OkAfterTimeoutIp) へ到達後に「タイムアウト」が N 回連続（N=-ConsecTimeoutsForOk）→ OK
+        ※ -OkAfterTimeoutIp 未指定時は「ターゲットIPへ到達後」に同条件でOK
+    - ホップ行が1つも無い場合 → NG
 
-  ログファイルは既定で毎回新規作成（"tracert_yyyymmdd_hhmmss.log"）。
-  - -LogPath を指定して既存がある＆-Append なし → 自動で別名（末尾に日時）へリネーム保存
-  - -Append 指定 → 指定のログに追記。ただしサマリは「直近実行分のみ」をログの先頭へ再配置
+  ログ運用:
+    - 既定は毎回新規ファイル（tracert_yyyymmdd_hhmmss.log）
+    - -LogPath 指定＆既存あり＆-Append 無し → 自動リネーム（_yyyymmdd_hhmmss 付与）
+    - -Append 指定 → 追記。ただしサマリは「直近実行分のみ」をログ先頭へ再配置
 
 .PARAMETER CsvPath
-  トレース対象を記したCSVファイルのパス。既定で "IP" 列を参照。
-  列名が "IP" でなく単一列CSVなら、その唯一列を IP として扱う。
+  対象CSV。基本は "IP" 列。単一列CSVなら唯一列をIPとして扱う。
 
 .PARAMETER LogPath
-  ログ出力ファイルのパス。未指定なら "tracert_yyyymmdd_hhmmss.log" を自動生成。
-  指定先が既に存在し、-Append を付けない場合は "name_yyyymmdd_hhmmss.log" に自動リネームして保存。
+  ログ出力先。未指定時は自動命名。
 
 .PARAMETER Append
-  ログへの追記モード。既存ファイルに追記し、今回分のサマリはログ冒頭へ差し替え挿入する。
-  既定（未指定）は毎回新規作成運用。
+  追記モード。今回サマリは先頭、既存本文は後段へ温存。
 
 .PARAMETER MaxHops
-  tracert の最大ホップ数（/h）。到達不可でもここで打ち切る。
+  tracert /h（最大ホップ数）。既定 30。
 
 .PARAMETER TimeoutMs
-  tracert の各ホップ待ち時間（/w, ミリ秒）。値を小さくすると短時間で終了するが結果の * が増えやすい。
+  tracert /w（各ホップの待ち時間 ms）。既定 4000。
 
 .PARAMETER NoDns
-  tracert の /d 相当。名前解決をせず、純粋なIPのみで高速化する。
+  tracert /d（名前解決なし）。速度/安定性向上。
 
 .PARAMETER DelayMsBetweenTargets
-  各ターゲットの実行間に入れるスリープ（ミリ秒）。装置負荷やDoS誤検知の抑制に。
+  宛先間スリープ(ms)。大量宛先時の緩和。
 
 .PARAMETER ConsecTimeoutsForOk
-  「到達後にタイムアウトが連続で何回続いたらOKとみなすか」の閾値（既定5）。
-  監視機器やFWが宛先へのICMP応答を抑止する構成で、到達確認だけ欲しい際に有効。
+  「到達後タイムアウト×N連続でOK」のN。既定 5。
 
 .PARAMETER OkAfterTimeoutIp
-  「このIPに到達した**のち**にタイムアウト×N連続でOK」を評価する基準IP。
-  未指定時は「ターゲット自身に到達後」の評価にフォールバック。
-
-.EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\TraceFromCsv.ps1 -CsvPath .\targets.csv
-
-.EXAMPLE
-  .\TraceFromCsv.ps1 -CsvPath .\targets.csv -LogPath .\trace.log -Append -OkAfterTimeoutIp 203.0.113.45 -ConsecTimeoutsForOk 5
-
-.NOTES
-  - 文字コードは UTF-8 (BOM付き) で保存推奨（メモ帳でも可）
-  - 実行ポリシーは Bypass で一時実行 or CurrentUser スコープで RemoteSigned 推奨
+  「このIPv4に到達後」のタイムアウト×N連続でOKとする基準IP。
+  未指定時は対象ターゲットのIPv4で評価。
 #>
 
 param(
     [Parameter(Mandatory=$true)]
-    [string]$CsvPath,                         # 入力CSVへのフル/相対パス。"IP" 列が基本。単一列CSVなら自動でその列をIP扱い。
-    [string]$LogPath,                         # 未指定なら "tracert_yyyymmdd_hhmmss.log" を自動生成。
-    [switch]$Append,                          # 追記モード。既存ログの先頭に今回のサマリを再配置し、末尾に旧本文を温存。
-    [int]$MaxHops = 30,                       # tracert /h : 到達できなくても ここで打切り。大きすぎると時間がかかる。
-    [int]$TimeoutMs = 4000,                   # tracert /w : 各ホップの待ち時間(ms)。回線/装置の性質に合わせて調整。
-    [switch]$NoDns,                           # tracert /d : 名前解決を抑止し速度向上。DNSが不安定な環境にも有効。
-    [int]$DelayMsBetweenTargets = 0,          # 各ターゲットの間に入れるスリープ(ms)。大量宛先時の緩和に。
-    [int]$ConsecTimeoutsForOk = 5,            # 「到達後タイムアウト×N連続でOK」のN。FW/IDS対策で宛先応答が無い構成向け。
-    [string]$OkAfterTimeoutIp                 # 指定IPに到達した後のタイムアウト×NでOK判定したい“到達判定IP”（IPv4想定）。
+    [string]$CsvPath,
+    [string]$LogPath,                         # 未指定なら自動命名 tracert_yyyymmdd_hhmmss.log
+    [switch]$Append,                          # 追記モード（サマリは直近分を先頭へ再配置）
+    [int]$MaxHops = 30,                       # tracert /h
+    [int]$TimeoutMs = 4000,                   # tracert /w (ms)
+    [switch]$NoDns,                           # tracert /d
+    [int]$DelayMsBetweenTargets = 0,          # 宛先間スリープ(ms)
+    [int]$ConsecTimeoutsForOk = 5,            # 到達後タイムアウト×N連続でOK
+    [string]$OkAfterTimeoutIp                 # 到達基準のIPv4
 )
 
-# ========== 前処理 ==========
-# 入力CSVの存在確認：無ければ即中断。メッセージは日本語で明確に。
+# ===== ヘルパー：UTF-8(BOM) で確実に書き出す =====
+function Write-Utf8Bom {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$Content
+    )
+    if ($PSVersionTable.PSVersion.Major -ge 6) {
+        $bom   = [byte[]](0xEF,0xBB,0xBF)
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Content)
+        [System.IO.File]::WriteAllBytes($Path, $bom + $bytes)
+    } else {
+        $Content | Set-Content -Path $Path -Encoding utf8
+    }
+}
+
+# ===== 前処理 =====
 if (-not (Test-Path $CsvPath)) { Write-Error "CSV が見つかりません: $CsvPath"; exit 1 }
 
-# CSV読み込み："IP" 列前提。単一列CSVは唯一列をIPとみなす。
 try { $rows = Import-Csv -Path $CsvPath } catch { Write-Error "CSV 読み込み失敗: $($_.Exception.Message)"; exit 1 }
 if (-not $rows -or $rows.Count -eq 0) { Write-Error "CSV にデータ行がありません。"; exit 1 }
 
-# 列名が "IP" でない場合のフォールバック：唯一列をIPにコピー（複数列はエラー）
+# "IP" 列が無い場合、単一列CSVなら唯一列をIPへ昇格
 if (-not ($rows | Get-Member -Name 'IP' -MemberType NoteProperty)) {
     $first = $rows | Select-Object -First 1
     $props = $first.PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' }
@@ -89,7 +91,7 @@ if (-not ($rows | Get-Member -Name 'IP' -MemberType NoteProperty)) {
     }
 }
 
-# -OkAfterTimeoutIp の書式チェック：IPv4のみ許容。曖昧なホスト名は誤判定の原因なのでここでは弾く。
+# OkAfterTimeoutIp は IPv4 のみ許容
 $OkAfterTimeoutIpResolved = $null
 if ($OkAfterTimeoutIp) {
     $tmpIp = $null
@@ -99,10 +101,10 @@ if ($OkAfterTimeoutIp) {
     }
     $OkAfterTimeoutIpResolved = $tmpIp.ToString()
 }
+# 関数内から参照できるよう script: へ
+$script:OkAfterTimeoutIpResolved = $OkAfterTimeoutIpResolved
 
-# ログファイルパスの決定ロジック：
-#  - 未指定 → "tracert_yyyymmdd_hhmmss.log"
-#  - 指定＆既存あり＆Appendなし → 自動リネーム（上書き事故回避）
+# ログファイルパス決定
 $timestamp = (Get-Date -Format "yyyyMMdd_HHmmss")
 if (-not $LogPath -or [string]::IsNullOrWhiteSpace($LogPath)) {
     $LogPath = "tracert_$timestamp.log"
@@ -116,30 +118,27 @@ if (-not $LogPath -or [string]::IsNullOrWhiteSpace($LogPath)) {
 }
 Write-Host "ログ出力先: $LogPath （Append=$($Append.IsPresent) / OkAfterTimeoutIp=$OkAfterTimeoutIpResolved / N=$ConsecTimeoutsForOk）"
 
-# 正規表現・ヘルパ
-#  - reTimeoutAnyLang：日英の "要求がタイムアウトしました / Request timed out" に対応
-#  - reTraceCompleteAnyLang：日英の "トレースは完了しました / Trace complete" に対応
-#  - reHopLine：ホップ行判定（行頭の番号で判別、可変空白許容）
+# ===== 正規表現・ヘルパ =====
 $reTimeoutAnyLang        = '(要求がタイムアウトしました|Request timed out)'
-$reTraceCompleteAnyLang  = '(トレースは完了しました|Trace complete)'
-$reHopLine               = '^\s*(\d+)\s'
+$reTraceCompleteAnyLang  = '(トレース[はを]完了しました。?|Trace complete\.?)'
+$reHopLine               = '^\s*(\d+)\s'             # 行頭のホップ番号
+$reIPv4                  = '(?<!\d)(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?!\d)'
 
-# ホスト名が来たときに最初のIPv4を得る（tracert 出力との突合せ用途）
 function Resolve-FirstIPv4 {
     param([string]$HostOrIp)
     if ([System.Net.IPAddress]::TryParse($HostOrIp, [ref]([System.Net.IPAddress]$null))) { return $HostOrIp }
     try {
         $hosts = [System.Net.Dns]::GetHostAddresses($HostOrIp) | Where-Object { $_.AddressFamily -eq 'InterNetwork' }
-        if ($hosts) { return $hosts[0].ToString() }  # Aレコードの先頭を採用
+        if ($hosts) { return $hosts[0].ToString() }
     } catch { }
     return $null
 }
 
-# ========== ログ本文はメモリに貯めて最後に書く（サマリを先頭へ差し込むため） ==========
-$detailLog = New-Object System.Collections.Generic.List[string]   # 詳細ログ（tracert出力＋判定メタ）
-$results   = New-Object System.Collections.Generic.List[object]  # サマリ生成用（No/Target/Verdict/Detail）
+# ===== ログ本文（詳細）とサマリ用のバッファ =====
+$detailLog = New-Object System.Collections.Generic.List[string]
+$results   = New-Object System.Collections.Generic.List[object]
 
-# セッションヘッダ（再現性・環境差異の追跡に役立つ）
+# セッションヘッダ
 $detailLog.Add( ('=' * 80) )
 $detailLog.Add( "Trace session start : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" )
 $detailLog.Add( "CSV                 : $CsvPath" )
@@ -150,7 +149,7 @@ if ($OkAfterTimeoutIpResolved) { $detailLog.Add( "OkAfterTimeoutIp     : $OkAfte
 $detailLog.Add( ('=' * 80) )
 $detailLog.Add( '' )
 
-# 1ターゲット分の実行と判定
+# ===== 1ターゲット分の実行・判定 =====
 function Invoke-TraceOne {
     param([Parameter(Mandatory=$true)][string]$Target)
 
@@ -159,21 +158,21 @@ function Invoke-TraceOne {
         return [pscustomobject]@{ Target=$Target; Verdict='NG'; Detail='empty target' }
     }
 
-    # tracert 引数を丁寧に構成（/d /h /w の順序は問わないが読みやすさ重視で固定）
+    # tracert 引数
     $args = @()
     if ($NoDns.IsPresent) { $args += '/d' }
     $args += '/h'; $args += "$MaxHops"
     $args += '/w'; $args += "$TimeoutMs"
     $args += "$targetTrim"
 
-    # ---- 出力ヘッダ（ターゲット単位）----
+    # ターゲットヘッダ
     $detailLog.Add( ('-' * 80) )
     $detailLog.Add( "Target : $targetTrim" )
     $detailLog.Add( "Start  : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" )
     $detailLog.Add( ('-' * 80) )
     $detailLog.Add( '' )
 
-    # tracert 実行（Start-Process + RedirectStandardOutput で文字化け/混入を避ける）
+    # tracert 実行
     $tmp = [System.IO.Path]::GetTempFileName()
     try {
         $proc = Start-Process -FilePath "$env:WINDIR\System32\tracert.exe" -ArgumentList $args -NoNewWindow -PassThru -RedirectStandardOutput $tmp
@@ -183,29 +182,37 @@ function Invoke-TraceOne {
         Remove-Item -Path $tmp -ErrorAction SilentlyContinue
     }
 
-    # 生ログをそのまま詳細ログへ（改行ごとにAdd）
+    # 生ログを詳細へ
     if ($outText) {
         foreach ($ln in ($outText -split "`r?`n")) { $detailLog.Add($ln) }
     }
     $detailLog.Add('')
 
-    # ===== 判定ロジック =====
+    # ===== 判定 =====
     $lines = @()
     if ($outText) { $lines = $outText -split "`r?`n" }
 
-    # (1) 1ホップ目がタイムアウト → NG（ゲートウェイ未達＝ローカル/配下問題の可能性が高い）
-    $firstHopLine = $lines | Where-Object { $_ -match $reHopLine } | Select-Object -First 1
-    if ($null -ne $firstHopLine) {
-        if ($firstHopLine -match $reTimeoutAnyLang) {
-            $detailLog.Add( "End    : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" )
-            $detailLog.Add( "Result : NG (1ホップ目でタイムアウト)" )
-            $detailLog.Add( ('-' * 80) )
-            $detailLog.Add( '' )
-            return [pscustomobject]@{ Target=$targetTrim; Verdict='NG'; Detail='first hop timeout' }
-        }
+    # ★ ホップ行が1つも無い → NG
+    $hopLines = $lines | Where-Object { $_ -match $reHopLine }
+    if (-not $hopLines -or $hopLines.Count -eq 0) {
+        $detailLog.Add( "End    : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" )
+        $detailLog.Add( "Result : NG (ホップ情報なし)" )
+        $detailLog.Add( ('-' * 80) )
+        $detailLog.Add( '' )
+        return [pscustomobject]@{ Target=$targetTrim; Verdict='NG'; Detail='no hop lines' }
     }
 
-    # (2) "Trace complete" → OK（OS言語差異を考慮し日英両対応）
+    # (1) 1ホップ目がタイムアウト → NG
+    $firstHopLine = $hopLines | Select-Object -First 1
+    if ($firstHopLine -match $reTimeoutAnyLang) {
+        $detailLog.Add( "End    : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" )
+        $detailLog.Add( "Result : NG (1ホップ目でタイムアウト)" )
+        $detailLog.Add( ('-' * 80) )
+        $detailLog.Add( '' )
+        return [pscustomobject]@{ Target=$targetTrim; Verdict='NG'; Detail='first hop timeout' }
+    }
+
+    # (2) Trace complete → OK
     if ($outText -match $reTraceCompleteAnyLang) {
         $detailLog.Add( "End    : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" )
         $detailLog.Add( "Result : OK (Trace complete)" )
@@ -214,22 +221,43 @@ function Invoke-TraceOne {
         return [pscustomobject]@{ Target=$targetTrim; Verdict='OK'; Detail='trace complete' }
     }
 
-    # (3) 指定IP（あるいはターゲット）到達後にタイムアウト×N連続 → OK
-    #     - OkAfterTimeoutIp があればそれを優先（"post-このIP" のタイムアウト列を評価）
-    #     - 無ければターゲットIP（ホスト名はA解決の先頭IPv4）で到達判定
+    # (2.5) 最終ホップがターゲットIPならOK（言語に依存しないフォールバック）
+    $targetIpForCheck = Resolve-FirstIPv4 -HostOrIp $targetTrim
+    if ($targetIpForCheck) {
+       $lastHop = ($lines | Where-Object { $_ -match $reHopLine } | Select-Object -Last 1)
+       if ($lastHop) {
+           $ipsLast = [regex]::Matches($lastHop, $reIPv4) | ForEach-Object { $_.Value }
+           if ($ipsLast -and ($ipsLast -contains $targetIpForCheck)) {
+               $detailLog.Add( "End    : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" )
+               $detailLog.Add( "Result : OK (last hop reached target IP)" )
+               $detailLog.Add( ('-' * 80) )
+               $detailLog.Add( '' )
+               return [pscustomobject]@{ Target=$targetTrim; Verdict='OK'; Detail='trace complete (by last hop ip match)' }
+           }
+        }
+     }
+
+
+    # (3) 指定IP（or ターゲット）到達後に timeout × N 連続 → OK
     $arrivalIp = if ($script:OkAfterTimeoutIpResolved) { $script:OkAfterTimeoutIpResolved } else { Resolve-FirstIPv4 -HostOrIp $targetTrim }
     $destHopIndex = $null
     if ($arrivalIp) {
         for ($i=0; $i -lt $lines.Count; $i++) {
             $ln = $lines[$i]
             if ($ln -match $reHopLine) {
-                if ($ln -match [regex]::Escape($arrivalIp)) { $destHopIndex = $i; break }
+                $ips = [regex]::Matches($ln, $reIPv4) | ForEach-Object { $_.Value }
+                if ($ips -and ($ips -contains $arrivalIp)) {
+                    $destHopIndex = $i
+                    break
+                }
             }
+        }
+        if ($null -eq $destHopIndex) {
+            $detailLog.Add("[DEBUG] 到達判定: arrivalIp=$arrivalIp に一致するホップ行は見つかりませんでした")
         }
     }
 
     if ($null -ne $destHopIndex) {
-        # 到達以降の行で "Request timed out/要求がタイムアウトしました" が N 回連続したら OK
         $consecTimeout = 0
         for ($j=$destHopIndex+1; $j -lt $lines.Count; $j++) {
             $ln2 = $lines[$j]
@@ -245,16 +273,19 @@ function Invoke-TraceOne {
                     $detailLog.Add( "Result : $label" )
                     $detailLog.Add( ('-' * 80) )
                     $detailLog.Add( '' )
-                    return [pscustomobject]@{ Target=$targetTrim; Verdict='OK'; Detail="post-$arrivalIp $ConsecTimeoutsForOk consecutive timeouts" }
+                    return [pscustomobject]@{
+                        Target  = $targetTrim
+                        Verdict = 'OK'
+                        Detail  = "post-$arrivalIp ${ConsecTimeoutsForOk}x timeouts"
+                    }
                 }
             } else {
-                # 連続カウントは途切れる（間に応答が混ざったら「連続」ではない）
-                $consecTimeout = 0
+                $consecTimeout = 0   # 連続が切れる
             }
         }
     }
 
-    # (4) ここまで何にも該当しなければ NG（中間での到達が認められない／タイムアウト連続条件を満たさない等）
+    # (4) 何にも該当しない → NG
     $detailLog.Add( "End    : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" )
     $detailLog.Add( "Result : NG" )
     $detailLog.Add( ('-' * 80) )
@@ -262,14 +293,19 @@ function Invoke-TraceOne {
     return [pscustomobject]@{ Target=$targetTrim; Verdict='NG'; Detail='no complete, no post-arrival timeouts' }
 }
 
-# ========== メインループ ==========
+# ===== メインループ =====
 $idx = 0
 foreach ($row in $rows) {
     $idx++
     $ip = "$($row.IP)".Trim()
-    if ([string]::IsNullOrWhiteSpace($ip)) { continue }  # 空行スキップ
-    Write-Host "[$idx/$($rows.Count)] Tracing $ip ..."
+    if ([string]::IsNullOrWhiteSpace($ip)) { continue }
+    Write-Host "[$idx/$($rows.Count)] Tracing $ip ... (NoDNS=$($NoDns.IsPresent))"
     $res = Invoke-TraceOne -Target $ip
+
+    # 逐次：ターミナルに判定を色付きで表示
+    $color = if ($res.Verdict -eq 'OK') { 'Green' } else { 'Red' }
+    Write-Host ("    -> [{0}] {1}" -f $res.Verdict, $res.Detail) -ForegroundColor $color
+
     $results.Add([pscustomobject]@{
         No = $idx
         Target = $ip
@@ -279,12 +315,12 @@ foreach ($row in $rows) {
     if ($DelayMsBetweenTargets -gt 0) { Start-Sleep -Milliseconds $DelayMsBetweenTargets }
 }
 
-# セッションフッタ（実行ウィンドウの境界としても役立つ）
+# セッションフッタ
 $detailLog.Add( ('=' * 80) )
 $detailLog.Add( "Trace session end   : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" )
 $detailLog.Add( ('=' * 80) )
 
-# ========== サマリ（直近実行分のみ）をログ冒頭へ ==========
+# ===== サマリ（直近実行分のみ）をログ冒頭へ =====
 $summaryLines = New-Object System.Collections.Generic.List[string]
 $summaryLines.Add("=== 結果一覧 ===")
 foreach ($r in $results) {
@@ -293,13 +329,13 @@ foreach ($r in $results) {
 $summaryLines.Add("=================")
 $summaryText = ($summaryLines -join "`r`n")
 
-# 追記モード時のみ、既存ログを後段へ温存して結合
+# Append 時は既存ログ本文を後段へ温存
 $existing = ""
 if ($Append -and (Test-Path $LogPath)) {
     try { $existing = Get-Content -Path $LogPath -Raw -Encoding UTF8 } catch { $existing = "" }
 }
 
-# 最終書き出し：サマリ → 今回の詳細 → （Appendなら）旧ログ本文
+# 最終テキスト：サマリ → 今回の詳細 → （Appendなら）旧本文
 $finalText = @()
 $finalText += $summaryText
 $finalText += ""
@@ -311,10 +347,10 @@ if ($Append) {
     }
 }
 
-# 文字コードはUTF-8（BOM付き）で統一。Windows環境での文字化け回避に有効。
-$finalText -join "`r`n" | Set-Content -Path $LogPath -Encoding utf8
+# UTF-8(BOM) で書き出し
+Write-Utf8Bom -Path $LogPath -Content ($finalText -join "`r`n")
 
-# 画面にもサマリを表示（CI等で標準出力を拾う用途に便利）
+# 画面にもサマリを表示
 Write-Host ""
 Write-Host $summaryText
 Write-Host ""
