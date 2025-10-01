@@ -9,18 +9,29 @@ powershell -ExecutionPolicy Bypass -File .\TraceFromCsv.ps1 -CsvPath .\targets.c
 
 ターミナル出力例
 ```
-ログ出力先: tracert_20251001_230500.log （Append=False / OkAfterTimeoutIp=1.1.1.1 / N=3）
-[1/3] Tracing 8.8.8.8 ...
-[2/3] Tracing 1.1.1.1 ...
-[3/3] Tracing 219.188.238.24 ...
+PS C:\Users\sr-server001\Desktop\test> powershell -ExecutionPolicy Bypass -File .\TraceFromCsv.ps1 -CsvPath .\targets.csv -OkAfterTimeoutIp 1.1.1.1 -ConsecTimeoutsForOk 3 -NoDns
+ログ出力先: tracert_20251002_000449.log （Append=False / OkAfterTimeoutIp=1.1.1.1 / N=3）
+[1/5] Tracing 1.1.1.1 ... (NoDNS=True)
+    -> [OK] trace complete
+[2/5] Tracing 8.8.8.8 ... (NoDNS=True)
+    -> [OK] trace complete
+[3/5] Tracing 192.168.2.1 ... (NoDNS=True)
+    -> [OK] trace complete
+[4/5] Tracing 192.168.1.1 ... (NoDNS=True)
+    -> [OK] trace complete
+[5/5] Tracing 192.168.12.1 ... (NoDNS=True)
+    -> [OK] trace complete
 
 === 結果一覧 ===
-1 8.8.8.8［OK］
-2 1.1.1.1［OK］
-3 219.188.238.24［NG］
+1 1.1.1.1［OK］
+2 8.8.8.8［OK］
+3 192.168.2.1［OK］
+4 192.168.1.1［OK］
+5 192.168.12.1［OK］
 =================
 
-完了: tracert_20251001_230500.log にサマリ＋詳細ログを書き込みました。
+完了: tracert_20251002_000449.log にサマリ＋詳細ログを書き込みました。
+PS C:\Users\sr-server001\Desktop\test>
 ```
 
 ログファイルの中身イメージ
