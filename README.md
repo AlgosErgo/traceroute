@@ -1,10 +1,9 @@
 # traceroute
 
+使用例
 ```
 powershell -ExecutionPolicy Bypass -File .\TraceFromCsv.ps1 -CsvPath .\targets.csv -OkAfterTimeoutIp 203.0.113.45 -ConsecTimeoutsForOk 3 -NoDns
 ```
-
-
 
 
 ターミナル出力例
@@ -77,6 +76,21 @@ End    : 2025-10-01 23:05:13
 Result : OK (指定IP 1.1.1.1 到達後にタイムアウト×3 連続)
 --------------------------------------------------------------------------------
 ```
+
+
+
+#判定ルール
+  ##判定ルール:
+    - (1) 1ホップ目でタイムアウト → NG
+    - (2) "Trace complete"（日英） → OK
+    - (3) 指定IP(-OkAfterTimeoutIp) へ到達後に「タイムアウト」が N 回連続（N=-ConsecTimeoutsForOk）→ OK
+        ※ -OkAfterTimeoutIp 未指定時は「ターゲットIPへ到達後」に同条件でOK
+    - ホップ行が1つも無い場合 → NG
+
+  ##ログ運用:
+    - 既定は毎回新規ファイル（tracert_yyyymmdd_hhmmss.log）
+    - -LogPath 指定＆既存あり＆-Append 無し → 自動リネーム（_yyyymmdd_hhmmss 付与）
+    - -Append 指定 → 追記。ただしサマリは「直近実行分のみ」をログ先頭へ再配置
 
 
 
